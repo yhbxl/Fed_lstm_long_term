@@ -1,0 +1,19 @@
+{
+  "stability_analysis": {},
+  "selection_distribution": {},
+  "performance_trends": {
+    "accuracy": {
+      "mean": 0.94793,
+      "std": 0.12086302619080824,
+      "min": 0.4325,
+      "max": 0.9878
+    },
+    "loss": {
+      "mean": 0.16289809551684126,
+      "std": 0.35013042341086875,
+      "min": 0.04353002644208694,
+      "max": 1.6476382389190092
+    }
+  },
+  "total_rounds": 20
+}

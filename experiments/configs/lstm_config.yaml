@@ -1,0 +1,62 @@
+# LSTM实验配置
+
+# 数据配置
+data:
+  dataset: 'mnist'  # 数据集名称，支持 mnist, cifar10, femnist
+  batch_size: 64    # 批次大小
+  num_clients: 10   # 客户端数量
+  num_classes: 10   # 类别数
+  num_workers: 4    # 数据加载的工作进程数
+  non_iid_ratio: 0.5  # 非独立同分布比例
+  data_dir: 'datasets'  # 数据集保存目录
+
+# 模型配置
+model:
+  input_size: 28    # 输入特征维度
+  hidden_size: 128  # 隐藏层大小
+  num_layers: 2     # LSTM层数
+  num_classes: 10   # 类别数
+  dropout: 0.2      # Dropout比率
+
+# 训练配置
+training:
+  num_rounds: 6    # 联邦学习轮次
+  local_epochs: 5   # 本地训练轮次
+  learning_rate: 0.01  # 学习率
+  momentum: 0.9     # 动量
+  weight_decay: 0.0001  # 权重衰减
+  device: 'cuda'    # 训练设备，可选 'cuda' 或 'cpu'
+
+# 客户端选择配置
+client_selection:
+  client_selection_strategy: 'hybrid'  # 可选: 'random', 'performance', 'diversity', 'hybrid'
+  min_clients: 3     # 最小选择客户端数
+  max_clients: 10    # 最大选择客户端数
+  fraction_fit: 0.5  # 每轮选择的客户端比例
+  diversity_weight: 0.3  # 多样性权重
+  performance_weight: 0.7  # 性能权重
+  window_size: 5     # 历史窗口大小
+
+# 系统配置
+system:
+  seed: 42  # 随机种子
+  gpu_id: 0  # GPU ID，-1表示使用CPU
+  log_level: 'info'  # 日志级别
+  verbose: true  # 是否显示详细信息
+
+# 性能分析配置
+performance_analysis:
+  window_size: 10
+  stability_threshold: 0.1
+  min_samples: 5
+
+# 日志配置
+logging:
+  level: "INFO"
+  save_interval: 5  # 每5轮保存一次
+  metrics:
+    - "accuracy"
+    - "loss"
+    - "training_time"
+    - "selected_clients"
+    - "client_performance"

@@ -1,0 +1,23 @@
+{
+  "stability_analysis": {},
+  "selection_distribution": {},
+  "performance_trends": {
+    "accuracy": {
+      "mean": 0.9481850000000002,
+      "std": 0.12169611035279639,
+      "min": 0.4302,
+      "max": 0.9887
+    },
+    "loss": {
+      "mean": 0.16351559737651455,
+      "std": 0.3591410236144163,
+      "min": 0.04414526261635804,
+      "max": 1.6892877050266144
+    }
+  },
+  "total_rounds": 20,
+  "training_time": 1119.821923,
+  "dataset": "mnist",
+  "client_selection_strategy": "hybrid",
+  "num_clients": 10
+}
