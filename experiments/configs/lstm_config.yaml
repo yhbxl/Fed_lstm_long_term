@@ -20,7 +20,7 @@ model:
 
 # 训练配置
 training:
-  num_rounds: 6    # 联邦学习轮次
+  num_rounds: 10    # 联邦学习轮次
   local_epochs: 5   # 本地训练轮次
   learning_rate: 0.01  # 学习率
   momentum: 0.9     # 动量
@@ -32,7 +32,7 @@ client_selection:
   client_selection_strategy: 'hybrid'  # 可选: 'random', 'performance', 'diversity', 'hybrid'
   min_clients: 3     # 最小选择客户端数
   max_clients: 10    # 最大选择客户端数
-  fraction_fit: 0.5  # 每轮选择的客户端比例
+  fraction_fit: 0.1  # 每轮选择的客户端比例
   diversity_weight: 0.3  # 多样性权重
   performance_weight: 0.7  # 性能权重
   window_size: 5     # 历史窗口大小
