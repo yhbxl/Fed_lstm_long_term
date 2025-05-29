@@ -1,91 +1,111 @@
 import os
 import torch
 import torch.nn as nn
-import numpy as np
-import matplotlib.pyplot as plt
 from typing import Dict, Any, List, Tuple
+import numpy as np
 from datetime import datetime
 import json
-import yaml
+import matplotlib.pyplot as plt
+
 from experiments.base.base_experiment import BaseExperiment
-from core.fl_trainer.federated_trainer import FederatedTrainer
-from core.client_selector.client_selector import ClientSelector
-from core.models.lstm_model import LSTMModel
-from core.data.data_loader import get_data_loaders
+from core.federated_trainer import FederatedTrainer
+from core.client_selector import LongTermClientSelector
+from core.lstm_performance_predictor import LSTMPredictor
+from core.models import get_model
+
 
 class LSTMExperiment(BaseExperiment):
-    def __init__(self, config_path: str, output_dir: str):
-        """初始化LSTM实验
+    """基于论文的联邦学习实验"""
+    
+    def __init__(self, args, output_dir: str = "results"):
+        """初始化实验
         
         Args:
-            config_path: 配置文件路径
-            output_dir: 输出目录
+            args: 命令行参数对象
+            output_dir: 输出目录路径
         """
-        super().__init__(config_path, output_dir)
-        self.metrics_history = []  # 添加指标历史记录
+        self.args = args
+        self.metrics_history = []
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # 初始化数据和模型
+        self.clients = None
+        self.global_model = None
+        self.test_loader = None
+        
+        # 训练参数
+        self.num_rounds = args.num_rounds
+        self.eval_interval = args.eval_interval
+        
+        # 初始化指标跟踪
+        self.global_metrics = {
+            'accuracy': [],
+            'loss': []
+        }
+        self.client_metrics = {}
         
         # 创建带时间戳的输出目录
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.output_dir = os.path.join(output_dir, f"LSTMExperiment_{timestamp}")
+        self.output_dir = os.path.join(output_dir, f"Experiment_{timestamp}")
         os.makedirs(self.output_dir, exist_ok=True)
         
-        # 保存配置文件
+        # 保存配置
         self.save_config()
         
         # 设置组件
         self.setup_components()
         
+    def create_model(self) -> nn.Module:
+        """创建模型
+        
+        Returns:
+            nn.Module: 创建的模型
+        """
+        model = get_model(self.args.model, self.args.num_classes)
+        return model.to(self.device)
+        
     def setup_components(self):
         """设置实验组件"""
         # 初始化模型
-        self.model = LSTMModel(
-            input_size=self.config['model']['input_size'],
-            hidden_size=self.config['model']['hidden_size'],
-            num_layers=self.config['model']['num_layers'],
-            num_classes=self.config['model']['num_classes']
+        self.model = self.create_model()
+        
+        # 初始化LSTM预测器
+        self.lstm_predictor = LSTMPredictor(
+            input_size=self.args.lstm_input_size,
+            hidden_size=self.args.lstm_hidden_size,
+            num_layers=self.args.lstm_num_layers,
+            dropout=self.args.lstm_dropout
         )
         
         # 初始化客户端选择器
-        self.client_selector = ClientSelector(
-            strategy=self.config['client_selection']['client_selection_strategy'],
-            config=self.config
+        self.client_selector = LongTermClientSelector(
+            args=self.args
         )
         
         # 初始化训练器
         self.trainer = FederatedTrainer(
-            client_selector=self.client_selector,
-            eval_fn=self._create_eval_fn(),
-            config=self.config
+            args=self.args,
+            eval_fn=self._create_eval_fn()
         )
         
         # 打印模型信息
-        model_info = self.model.get_model_info()
         print("\n模型信息:")
-        for key, value in model_info.items():
-            print(f"- {key}: {value}")
+        print(f"- 模型类型: {self.args.model}")
+        print(f"- 输出类别数: {self.args.num_classes}")
+        print(f"- 设备: {self.device}")
         
     def _create_eval_fn(self):
         """创建评估函数"""
         def eval_fn(model: nn.Module) -> Tuple[float, Dict[str, float]]:
-            # 获取测试数据
-            _, test_loader = get_data_loaders(
-                dataset=self.config['data']['dataset'],
-                batch_size=self.config['data']['batch_size'],
-                num_clients=1,  # 评估时只需要一个客户端
-                data_dir=self.config['data']['data_dir']  # 使用配置的数据目录
-            )
-            
-            # 评估模型
             model.eval()
             total_loss = 0
             correct = 0
             total = 0
             
             with torch.no_grad():
-                for inputs, targets in test_loader:
-                    if torch.cuda.is_available():
-                        inputs = inputs.cuda()
-                        targets = targets.cuda()
+                for inputs, targets in self.test_loader:
+                    inputs = inputs.to(self.device)
+                    targets = targets.to(self.device)
                     
                     outputs = model(inputs)
                     loss = nn.CrossEntropyLoss()(outputs, targets)
@@ -96,9 +116,8 @@ class LSTMExperiment(BaseExperiment):
                     correct += predicted.eq(targets).sum().item()
             
             accuracy = correct / total
-            avg_loss = total_loss / len(test_loader)
+            avg_loss = total_loss / len(self.test_loader)
             
-            # 记录指标
             metrics = {'accuracy': accuracy, 'loss': avg_loss}
             self.metrics_history.append(metrics)
             
@@ -106,246 +125,278 @@ class LSTMExperiment(BaseExperiment):
             
         return eval_fn
         
-    def run(self):
-        """运行实验"""
-        print(f"\n开始实验：{self.__class__.__name__}")
-        print(f"实验配置：dataset={self.config['data']['dataset']}, client_selection={self.config['client_selection']['client_selection_strategy']}")
-        print(f"数据目录：{self.config['data']['data_dir']}")
+    def prepare_data(self):
+        """准备实验数据"""
+        from torchvision import datasets, transforms
+        from torch.utils.data import random_split, DataLoader
         
-        # 获取数据加载器
-        train_loaders, _ = get_data_loaders(
-            dataset=self.config['data']['dataset'],
-            batch_size=self.config['data']['batch_size'],
-            num_clients=self.config['data']['num_clients'],
-            data_dir=self.config['data']['data_dir']  # 使用配置的数据目录
-        )
+        # 准备数据集
+        if self.args.dataset.lower() == 'mnist':
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.1307,), (0.3081,))
+            ])
+            train_dataset = datasets.MNIST('datasets/data', train=True, download=True, transform=transform)
+            test_dataset = datasets.MNIST('datasets/data', train=False, transform=transform)
+        elif self.args.dataset.lower() == 'cifar10':
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            ])
+            train_dataset = datasets.CIFAR10('datasets/data', train=True, download=True, transform=transform)
+            test_dataset = datasets.CIFAR10('datasets/data', train=False, transform=transform)
+        else:
+            raise ValueError(f"不支持的数据集：{self.args.dataset}")
         
-        # 创建客户端列表
-        clients = []
-        for i, train_loader in enumerate(train_loaders):
+        # 设置全局测试集
+        self.test_loader = DataLoader(test_dataset, batch_size=self.args.batch_size, shuffle=False)
+        
+        # 模拟非IID数据分布
+        train_labels = np.array(train_dataset.targets if hasattr(train_dataset, 'targets') else train_dataset.train_labels)
+        num_classes = len(np.unique(train_labels))
+        
+        # 使用Dirichlet分布模拟非IID数据
+        client_data_indices = self._dirichlet_split(train_labels, self.args.num_clients, num_classes, self.args.alpha)
+        
+        # 创建客户端数据
+        self.clients = []
+        
+        for i in range(self.args.num_clients):
+            # 获取客户端的数据索引
+            indices = client_data_indices[i]
+            
+            # 创建子数据集
+            subset = torch.utils.data.Subset(train_dataset, indices)
+            
+            # 分割为训练集和验证集
+            val_size = int(0.2 * len(subset))
+            train_size = len(subset) - val_size
+            client_train_dataset, client_val_dataset = random_split(
+                subset, [train_size, val_size]
+            )
+            
+            # 创建数据加载器
+            train_loader = DataLoader(
+                client_train_dataset,
+                batch_size=self.args.batch_size,
+                shuffle=True
+            )
+            
+            val_loader = DataLoader(
+                client_val_dataset,
+                batch_size=self.args.batch_size,
+                shuffle=False
+            )
+            
+            # 创建客户端
             client = {
                 'id': i,
                 'train_loader': train_loader,
-                'device': torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                'val_loader': val_loader,
+                'device': self.device,
+                'data_amount': len(client_train_dataset)
             }
-            clients.append(client)
+            
+            self.clients.append(client)
+            
+        print(f"数据准备完成，共有{self.args.num_clients}个客户端")
         
-        print(f"\n总客户端数: {len(clients)}")
-        print(f"训练轮次: {self.config['training']['num_rounds']}")
-        print(f"每轮选择客户端比例: {self.config['client_selection']['fraction_fit']}")
+    def _dirichlet_split(self, labels, num_clients, num_classes, alpha):
+        """使用Dirichlet分布划分数据"""
+        class_indices = [np.where(labels == i)[0] for i in range(num_classes)]
+        client_indices = [[] for _ in range(num_clients)]
+        
+        proportions = np.random.dirichlet(np.repeat(alpha, num_clients), size=num_classes)
+        
+        for class_id, indices in enumerate(class_indices):
+            np.random.shuffle(indices)
+            
+            client_props = proportions[class_id]
+            client_props = np.array([max(p, 0.001) for p in client_props])
+            client_props = client_props / client_props.sum()
+            
+            client_sample_sizes = (client_props * len(indices)).astype(int)
+            client_sample_sizes[-1] = len(indices) - client_sample_sizes[:-1].sum()
+            
+            start_idx = 0
+            for client_id, size in enumerate(client_sample_sizes):
+                client_indices[client_id].extend(indices[start_idx:start_idx + size])
+                start_idx += size
+                
+        return client_indices
+    
+    def save_config(self):
+        """保存配置到文件"""
+        config = vars(self.args)
+        config_path = os.path.join(self.output_dir, 'config.json')
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+            
+    def run(self):
+        """运行实验"""
+        # 准备数据
+        self.prepare_data()
         
         # 训练模型
-        start_time = datetime.now()
-        best_model = self.trainer.train(clients, self.model)
-        training_time = (datetime.now() - start_time).total_seconds()
-        
-        # 保存最佳模型
-        model_path = os.path.join(self.output_dir, "best_model.pth")
-        torch.save(best_model.state_dict(), model_path)
-        print(f"\n最佳模型已保存到: {model_path}")
-        
-        # 记录训练时间
-        self.training_time = training_time
-        print(f"总训练时间: {training_time:.2f} 秒")
+        print("\n开始训练...")
+        for round_idx in range(self.num_rounds):
+            print(f"\n轮次 {round_idx + 1}/{self.num_rounds}")
+            
+            # 选择客户端
+            selected_clients = self.client_selector.select_clients(
+                available_clients=self.clients,
+                num_selected=int(len(self.clients) * self.args.selection_fraction),
+                lstm_predictor=self.lstm_predictor
+            )
+            
+            # 训练选中的客户端
+            for client in selected_clients:
+                client_id = client['id']
+                self.trainer.train_client(
+                    client_id=client_id,
+                    model=self.model,
+                    train_loader=client['train_loader'],
+                    val_loader=client['val_loader']
+                )
+                
+                # 更新客户端历史
+                performance = self.trainer.evaluate_client(
+                    model=self.model,
+                    val_loader=client['val_loader']
+                )
+                self.client_selector.update_client_history(
+                    client_id=client_id,
+                    metrics=performance
+                )
+                
+                # 更新客户端指标
+                if client_id not in self.client_metrics:
+                    self.client_metrics[client_id] = {
+                        'accuracy': [],
+                        'loss': []
+                    }
+                self.client_metrics[client_id]['accuracy'].append(performance['accuracy'])
+                self.client_metrics[client_id]['loss'].append(performance['loss'])
+            
+            # 评估全局模型
+            if (round_idx + 1) % self.eval_interval == 0:
+                loss, metrics = self.trainer.evaluate_global_model(self.model)
+                print(f"全局模型性能 - 准确率: {metrics['accuracy']:.4f}, 损失: {loss:.4f}")
+                
+                # 更新全局指标
+                self.global_metrics['accuracy'].append(metrics['accuracy'])
+                self.global_metrics['loss'].append(metrics['loss'])
+                
+                # 调整观察窗口大小
+                if round_idx > 0:
+                    prev_accuracy = self.metrics_history[-2]['accuracy']
+                    curr_accuracy = metrics['accuracy']
+                    improvement = curr_accuracy - prev_accuracy
+                    self.client_selector.adjust_window_size(improvement)
         
         # 分析结果
         self.analyze_results()
         
+    def analyze_results(self):
+        """分析实验结果"""
+        # 绘制性能曲线
+        self._plot_performance_curves()
+        
         # 生成报告
         self.generate_report()
         
-        return best_model
-        
-    def analyze_results(self):
-        """分析实验结果"""
-        print("\n分析实验结果...")
-        
-        # 1. 分析训练稳定性
-        stability_analysis = {}
-        for client_id in range(self.config['data']['num_clients']):
-            if client_id in self.client_selector.client_history:
-                history = list(self.client_selector.client_history[client_id])
-                if len(history) >= 2:
-                    accuracy_history = [h.get('accuracy', 0.0) for h in history]
-                    loss_history = [h.get('loss', 1.0) for h in history]
-                    
-                    stability_analysis[str(client_id)] = {
-                        'accuracy_stability': float(1.0 / (1.0 + np.std(accuracy_history) / np.mean(accuracy_history))),
-                        'loss_stability': float(1.0 / (1.0 + np.std(loss_history) / np.mean(loss_history))),
-                        'num_selections': len(history)
-                    }
-                    
-        # 2. 分析客户端选择分布
-        selection_counts = {}
-        for client_id in range(self.config['data']['num_clients']):
-            if client_id in self.client_selector.client_history:
-                selection_counts[str(client_id)] = len(self.client_selector.client_history[client_id])
-                
-        # 3. 分析性能趋势
-        if self.metrics_history:
-            performance_trends = {
-                'accuracy': {
-                    'mean': float(np.mean([m.get('accuracy', 0.0) for m in self.metrics_history])),
-                    'std': float(np.std([m.get('accuracy', 0.0) for m in self.metrics_history])),
-                    'min': float(np.min([m.get('accuracy', 0.0) for m in self.metrics_history])),
-                    'max': float(np.max([m.get('accuracy', 0.0) for m in self.metrics_history]))
-                },
-                'loss': {
-                    'mean': float(np.mean([m.get('loss', 0.0) for m in self.metrics_history])),
-                    'std': float(np.std([m.get('loss', 0.0) for m in self.metrics_history])),
-                    'min': float(np.min([m.get('loss', 0.0) for m in self.metrics_history])),
-                    'max': float(np.max([m.get('loss', 0.0) for m in self.metrics_history]))
-                }
-            }
-        else:
-            performance_trends = {
-                'accuracy': {'mean': 0.0, 'std': 0.0, 'min': 0.0, 'max': 0.0},
-                'loss': {'mean': 0.0, 'std': 0.0, 'min': 0.0, 'max': 0.0}
-            }
-        
-        # 4. 汇总分析结果
-        analysis_results = {
-            'stability_analysis': stability_analysis,
-            'selection_distribution': selection_counts,
-            'performance_trends': performance_trends,
-            'total_rounds': len(self.metrics_history),
-            'training_time': self.training_time,
-            'dataset': self.config['data']['dataset'],
-            'client_selection_strategy': self.config['client_selection']['client_selection_strategy'],
-            'num_clients': self.config['data']['num_clients']
-        }
-        
-        # 保存分析结果
-        analysis_path = os.path.join(self.output_dir, "analysis_results.json")
-        with open(analysis_path, 'w', encoding='utf-8') as f:
-            json.dump(analysis_results, f, indent=2, ensure_ascii=False)
-        
-        print(f"分析结果已保存到: {analysis_path}")
-        
-        # 绘制并保存性能曲线
-        self._plot_performance_curves()
-            
     def _plot_performance_curves(self):
         """绘制性能曲线"""
-        if not self.metrics_history:
-            return
-        
-        # 创建图表目录
-        plots_dir = os.path.join(self.output_dir, "plots")
-        os.makedirs(plots_dir, exist_ok=True)
-        
         # 提取指标
         rounds = range(1, len(self.metrics_history) + 1)
-        accuracies = [m.get('accuracy', 0.0) for m in self.metrics_history]
-        losses = [m.get('loss', 0.0) for m in self.metrics_history]
+        accuracies = [m['accuracy'] for m in self.metrics_history]
+        losses = [m['loss'] for m in self.metrics_history]
         
-        # 1. 准确率曲线
-        plt.figure(figsize=(10, 5))
-        plt.plot(rounds, accuracies, marker='o')
-        plt.title(f'准确率趋势 - {self.config["client_selection"]["client_selection_strategy"]}')
-        plt.xlabel('轮次')
-        plt.ylabel('准确率')
-        plt.grid(True)
+        # 创建图表
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+        
+        # 绘制准确率曲线
+        ax1.plot(rounds, accuracies, 'b-', label='Accuracy')
+        ax1.set_xlabel('Rounds')
+        ax1.set_ylabel('Accuracy')
+        ax1.set_title('Model Accuracy over Rounds')
+        ax1.grid(True)
+        ax1.legend()
+        
+        # 绘制损失曲线
+        ax2.plot(rounds, losses, 'r-', label='Loss')
+        ax2.set_xlabel('Rounds')
+        ax2.set_ylabel('Loss')
+        ax2.set_title('Model Loss over Rounds')
+        ax2.grid(True)
+        ax2.legend()
+        
+        # 保存图表
         plt.tight_layout()
-        plt.savefig(os.path.join(plots_dir, "accuracy_trend.png"))
-        plt.close()
         
-        # 2. 损失曲线
-        plt.figure(figsize=(10, 5))
-        plt.plot(rounds, losses, marker='o', color='red')
-        plt.title(f'损失趋势 - {self.config["client_selection"]["client_selection_strategy"]}')
-        plt.xlabel('轮次')
-        plt.ylabel('损失')
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(os.path.join(plots_dir, "loss_trend.png"))
-        plt.close()
+        # 确保输出目录存在
+        os.makedirs(self.output_dir, exist_ok=True)
         
-        # 3. 客户端选择分布
-        if hasattr(self.client_selector, 'client_history'):
-            selection_counts = {}
-            for client_id in range(self.config['data']['num_clients']):
-                if client_id in self.client_selector.client_history:
-                    selection_counts[client_id] = len(self.client_selector.client_history[client_id])
-                else:
-                    selection_counts[client_id] = 0
-            
-            client_ids = list(selection_counts.keys())
-            counts = list(selection_counts.values())
-            
-            plt.figure(figsize=(12, 6))
-            plt.bar(client_ids, counts)
-            plt.title(f'客户端选择分布 - {self.config["client_selection"]["client_selection_strategy"]}')
-            plt.xlabel('客户端 ID')
-            plt.ylabel('被选择次数')
-            plt.xticks(client_ids)
-            plt.grid(True, axis='y')
-            plt.tight_layout()
-            plt.savefig(os.path.join(plots_dir, "client_selection_distribution.png"))
-            plt.close()
-            
-        print(f"性能曲线已保存到: {plots_dir}")
+        # 保存图表
+        save_path = os.path.join(self.output_dir, 'performance_curves.png')
+        plt.savefig(save_path)
+        plt.close()
         
     def generate_report(self):
         """生成实验报告"""
-        print("\n生成实验报告...")
+        # 设置字体
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
+        plt.rcParams['axes.unicode_minus'] = False
         
-        # 1. 读取分析结果
-        analysis_path = os.path.join(self.output_dir, "analysis_results.json")
-        with open(analysis_path, 'r', encoding='utf-8') as f:
-            analysis_results = json.load(f)
-            
-        # 2. 生成报告
-        report = []
-        report.append("# LSTM联邦学习实验报告")
-        report.append(f"\n生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        # 绘制性能曲线
+        plt.figure(figsize=(12, 6))
         
-        report.append("\n## 1. 实验配置")
-        report.append(f"- 数据集: {self.config['data']['dataset']}")
-        report.append(f"- 客户端数量: {self.config['data']['num_clients']}")
-        report.append(f"- 选择策略: {self.config['client_selection']['client_selection_strategy']}")
-        report.append(f"- 训练轮次: {self.config['training']['num_rounds']}")
-        report.append(f"- 每轮选择客户端比例: {self.config['client_selection']['fraction_fit']}")
-        report.append(f"- 总训练时间: {analysis_results['training_time']:.2f} 秒")
+        # 绘制全局模型性能
+        accuracies = [m['accuracy'] for m in self.metrics_history]
+        losses = [m['loss'] for m in self.metrics_history]
+        rounds = range(1, len(self.metrics_history) + 1)
         
-        report.append("\n## 2. 模型信息")
-        report.append(f"- 输入大小: {self.config['model']['input_size']}")
-        report.append(f"- 隐藏层大小: {self.config['model']['hidden_size']}")
-        report.append(f"- LSTM层数: {self.config['model']['num_layers']}")
-        report.append(f"- 输出类别数: {self.config['model']['num_classes']}")
+        plt.plot(rounds, accuracies, label='Global Model Accuracy', marker='o')
+        plt.plot(rounds, losses, label='Global Model Loss', marker='s')
         
-        report.append("\n## 3. 性能指标")
-        acc_trends = analysis_results['performance_trends']['accuracy']
-        loss_trends = analysis_results['performance_trends']['loss']
-        report.append(f"- 平均准确率: {acc_trends['mean']:.4f} ± {acc_trends['std']:.4f}")
-        report.append(f"- 最高准确率: {acc_trends['max']:.4f}")
-        report.append(f"- 平均损失: {loss_trends['mean']:.4f} ± {loss_trends['std']:.4f}")
+        # 绘制客户端性能
+        for client_id in self.client_metrics:
+            plt.plot(rounds, self.client_metrics[client_id]['accuracy'], 
+                    label=f'Client {client_id} Accuracy', 
+                    linestyle='--', alpha=0.5)
         
-        report.append("\n## 4. 客户端选择分布")
-        sorted_clients = sorted(analysis_results['selection_distribution'].items(), 
-                               key=lambda x: int(x[0]))
-        for client_id, count in sorted_clients:
-            report.append(f"- 客户端 {client_id}: 被选择 {count} 次")
-            
-        report.append("\n## 5. 稳定性分析")
-        for client_id, stability in analysis_results['stability_analysis'].items():
-            report.append(f"\n### 客户端 {client_id}")
-            report.append(f"- 准确率稳定性: {stability['accuracy_stability']:.4f}")
-            report.append(f"- 损失稳定性: {stability['loss_stability']:.4f}")
-            report.append(f"- 被选择次数: {stability['num_selections']}")
-            
-        report.append("\n## 6. 性能曲线")
-        report.append("性能曲线已生成并保存在 plots 目录中：")
-        report.append("- accuracy_trend.png: 准确率趋势")
-        report.append("- loss_trend.png: 损失趋势")
-        report.append("- client_selection_distribution.png: 客户端选择分布")
-            
-        # 3. 保存报告
-        report_path = os.path.join(self.output_dir, "experiment_report.md")
+        plt.xlabel('Rounds')
+        plt.ylabel('Metrics')
+        plt.title('Federated Learning Performance')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        
+        # 确保输出目录存在
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # 保存图片
+        save_path = os.path.join(self.output_dir, 'performance_curves.png')
+        plt.savefig(save_path)
+        plt.close()
+        
+        # 生成报告
+        report = {
+            'total_rounds': self.args.num_rounds,
+            'client_selection_fraction': self.args.selection_fraction,
+            'final_global_accuracy': float(accuracies[-1]),
+            'final_global_loss': float(losses[-1]),
+            'client_performance': {
+                str(client_id): {
+                    'final_accuracy': float(metrics['accuracy'][-1]),
+                    'final_loss': float(metrics['loss'][-1])
+                }
+                for client_id, metrics in self.client_metrics.items()
+            }
+        }
+        
+        # 保存报告
+        report_path = os.path.join(self.output_dir, 'experiment_report.json')
         with open(report_path, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(report))
-            
-        print(f"实验报告已保存到: {report_path}")
-import matplotlib.pyplot as plt
-plt.rcParams['font.sans-serif'] = ['SimHei']  # 设置中文字体为黑体
-plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+            json.dump(report, f, indent=4, ensure_ascii=False) 
