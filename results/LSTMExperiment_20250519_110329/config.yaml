@@ -1,0 +1,60 @@
+bandwidth_predictor:
+  initial_window_size: 5
+  learning_rate: 0.001
+  max_window_size: 10
+  min_window_size: 3
+client_selection:
+  adaptation_rate: 0.1
+  beta: 10.0
+  diversity_weight: 0.5
+  fraction_fit: 0.1
+  max_clients: 20
+  min_clients: 5
+  performance_weight: 0.5
+  strategy: performance
+  window_size: 5
+communication:
+  compression_ratio: 0.1
+  gradient_threshold: 0.01
+data:
+  alpha: 0.5
+  batch_size: 32
+  name: mnist
+  num_classes: 10
+  num_clients: 100
+experiments:
+  dataset_variants:
+  - alpha: 0.5
+    name: mnist
+  - alpha: 0.1
+    name: mnist
+  - alpha: 0.5
+    name: cifar10
+  metrics:
+  - val_accuracy
+  - communication_cost
+  - convergence_time
+  strategies:
+  - random
+  - performance
+  - diversity
+  - hybrid
+model:
+  bidirectional: false
+  dropout: 0.2
+  hidden_size: 128
+  input_size: 784
+  name: lstm
+  num_classes: 10
+  num_layers: 2
+system:
+  seed: 42
+training:
+  eval_interval: 1
+  learning_rate: 0.009558895783575596
+  local_epochs: 5
+  lr_decay: 0.995
+  min_lr: 0.0001
+  momentum: 0.9
+  num_rounds: 10
+  weight_decay: 1e-4
