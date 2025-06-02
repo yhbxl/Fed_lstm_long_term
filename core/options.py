@@ -13,7 +13,7 @@ def args_parser():
     parser.add_argument('--dataset', type=str, default='cifar10', help='数据集名称: mnist, cifar10, emnist')
     parser.add_argument('--num_classes', type=int, default=10, help='类别数量')
     parser.add_argument('--num_clients', type=int, default=100, help='客户端数量')
-    parser.add_argument('--batch_size', type=int, default=32, help='批量大小')
+    parser.add_argument('--batch_size', type=int, default=128, help='批量大小')
     parser.add_argument('--alpha', type=float, default=0.5, help='Dirichlet分布参数，控制非IID程度')
     
     # 模型参数
@@ -47,17 +47,17 @@ def args_parser():
     parser.add_argument('--max_delay_threshold', type=float, default=1.0, help='最大延迟阈值')
     parser.add_argument('--min_clients', type=int, default=5, help='每轮最少选择的客户端数量')
     parser.add_argument('--max_clients', type=int, default=20, help='每轮最多选择的客户端数量')
-    parser.add_argument('--selection_fraction', type=float, default=0.2, help='每轮选择的客户端比例')
+    parser.add_argument('--selection_fraction', type=float, default=0.1, help='每轮选择的客户端比例')
     
     # 训练参数
     parser.add_argument('--num_rounds', type=int, default=100, help='联邦学习总轮数')
     parser.add_argument('--local_epochs', type=int, default=5, help='本地训练轮数')
-    parser.add_argument('--learning_rate', type=float, default=0.01, help='学习率')
+    parser.add_argument('--learning_rate', type=float, default=0.001, help='学习率')
     parser.add_argument('--lr_decay', type=float, default=0.995, help='学习率衰减率')
     parser.add_argument('--min_lr', type=float, default=0.0001, help='最小学习率')
     parser.add_argument('--momentum', type=float, default=0.9, help='动量')
     parser.add_argument('--weight_decay', type=float, default=1e-4, help='权重衰减')
-    parser.add_argument('--eval_interval', type=int, default=1, help='评估间隔')
+    parser.add_argument('--eval_interval', type=int, default=5, help='评估间隔')
     
     # 通信参数
     parser.add_argument('--compression_ratio', type=float, default=0.1, help='梯度压缩比例')

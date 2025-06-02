@@ -12,15 +12,15 @@ def args_parser():
                       help='输出目录')
     
     # 数据集配置
-    parser.add_argument('--dataset', type=str, default='mnist',
-                      help='数据集名称 (mnist/cifar10)')
+    parser.add_argument('--dataset', type=str, default='cifar10',
+                      help='数据集名称 (mnist/fmnist/cifar10)')
     parser.add_argument('--num_classes', type=int, default=10,
                       help='类别数量')
-    parser.add_argument('--batch_size', type=int, default=32,
+    parser.add_argument('--batch_size', type=int, default=128,
                       help='批次大小')
     
     # 联邦学习配置
-    parser.add_argument('--num_clients', type=int, default=10,
+    parser.add_argument('--num_clients', type=int, default=100,
                       help='客户端总数')
     parser.add_argument('--num_rounds', type=int, default=10,
                       help='训练轮数')
@@ -30,8 +30,8 @@ def args_parser():
                       help='Dirichlet分布参数')
     
     # 模型配置
-    parser.add_argument('--model', type=str, default='cnn',
-                      help='模型类型 (cnn/mlp)')
+    parser.add_argument('--model', type=str, default='cnncifar',
+                      help='模型类型 (cnn/cnncifar/mlp)')
     parser.add_argument('--lr', type=float, default=0.01,
                       help='学习率')
     parser.add_argument('--momentum', type=float, default=0.9,
@@ -70,7 +70,7 @@ def args_parser():
                       help='延迟权重')
     
     # 评估配置
-    parser.add_argument('--eval_interval', type=int, default=5,
+    parser.add_argument('--eval_interval', type=int, default=1,
                       help='评估间隔')
     
     # 其他参数

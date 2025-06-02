@@ -27,3 +27,5 @@ python main.py \
     --delay_weight 0.3 \
     --eval_interval 10 \
     --seed 42
+
+    python main.py --dataset fmnist --model cnn --num_rounds 10

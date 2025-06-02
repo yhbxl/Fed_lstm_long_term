@@ -167,6 +167,8 @@ def get_model(model_name: str, num_classes: int = 10):
     """获取模型实例"""
     if model_name == "cnn":
         return CNN(num_classes=num_classes)
+    elif model_name == "cnncifar":
+        return CNNCifar(num_classes=num_classes)
     elif model_name == "mlp":
         return MLP(
             dim_in=784,  # 28x28 for MNIST
